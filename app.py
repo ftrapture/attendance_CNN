@@ -213,23 +213,12 @@ def upload_face():
             if img.mode != "RGB":
                 img = img.convert("RGB")
             
-            max_dimension = 1920
-            if img.width > max_dimension or img.height > max_dimension:
-                ratio = min(max_dimension / img.width, max_dimension / img.height)
-                new_size = (int(img.width * ratio), int(img.height * ratio))
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
-                app.logger.info("Resized image to: %dx%d", img.width, img.height)
-            
-            compressed_buffer = io.BytesIO()
-            img.save(compressed_buffer, format='JPEG', quality=85, optimize=True)
-            file_bytes = compressed_buffer.getvalue()
-            app.logger.info("Compressed size: %d bytes", len(file_bytes))
-            
             img_array = np.array(img)
             img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
             
             import face_recognition
-            face_locations = face_recognition.face_locations(img_bgr)
+            rgb_img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            face_locations = face_recognition.face_locations(rgb_img, model="hog")
             
             if len(face_locations) == 0:
                 app.logger.warning("No face detected in: %s", file.filename)

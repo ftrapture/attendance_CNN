@@ -822,7 +822,7 @@
                 try {
                     const compressedFile = await compressImage(imageFiles[i]);
                     const sizeMB = (compressedFile.size / (1024 * 1024)).toFixed(2);
-                    app.logger.info(`Compressed ${imageFiles[i].name} to ${sizeMB}MB`);
+                    console.log(`Compressed ${imageFiles[i].name} to ${sizeMB}MB`);
                     selectedFiles.push(compressedFile);
                     processedCount++;
                     showNotification(`Processing ${processedCount}/${imageFiles.length}...`, 'info');

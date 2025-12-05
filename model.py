@@ -128,7 +128,7 @@ def extract_face_encoding(image_path_or_array):
             image = cv2.convertScaleAbs(image, alpha=1.5, beta=30)
             image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2RGB)
         
-        face_locations = face_recognition.face_locations(image, model="cnn")
+        face_locations = face_recognition.face_locations(image, model="hog", number_of_times_to_upsample=1)
         
         if len(face_locations) == 0:
             face_locations = face_recognition.face_locations(image, model="hog", number_of_times_to_upsample=2)
@@ -173,7 +173,7 @@ def extract_embedding_for_image(stream_or_bytes, require_liveness=False, additio
         elif brightness > 200:
             rgb_img = cv2.convertScaleAbs(rgb_img, alpha=0.8, beta=-20)
         
-        face_locations = face_recognition.face_locations(rgb_img, model="cnn")
+        face_locations = face_recognition.face_locations(rgb_img, model="hog", number_of_times_to_upsample=1)
         
         if len(face_locations) == 0:
             face_locations = face_recognition.face_locations(rgb_img, model="hog", number_of_times_to_upsample=2)
