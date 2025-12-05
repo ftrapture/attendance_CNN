@@ -279,7 +279,7 @@ def upload_face():
             dist = face_recognition.face_distance([embeddings_arr[0]], embeddings_arr[i])[0]
             distances.append(dist)
         avg_dist = np.mean(distances)
-        if avg_dist > 0.6:
+        if avg_dist > 0.65:
             return jsonify({"error": "Images appear to be different people. Upload images of the same person"}), 400
     
     app.logger.info("Checking for duplicate faces across all students...")
@@ -305,7 +305,7 @@ def upload_face():
                     
                     for new_emb in embeddings_arr:
                         dist = face_recognition.face_distance([existing_encoding], new_emb)[0]
-                        if dist < 0.5:
+                        if dist < 0.45:
                             return jsonify({"error": f"This image matches with an existing student ID {existing_sid}. Please upload different pictures"}), 400
                 except Exception as e:
                     app.logger.error("Error checking existing image: %s", e)
@@ -340,7 +340,7 @@ def upload_face():
         for new_emb in embeddings_arr:
             distances = face_recognition.face_distance(existing_embeddings, new_emb)
             min_dist = np.min(distances)
-            if min_dist < 0.5:
+            if min_dist < 0.45:
                 return jsonify({"error": "This image already exists in this student's records. Please upload different pictures"}), 400
     
     saved = 0
@@ -498,7 +498,7 @@ def recognize_face():
             app.logger.warning(f"No match found. Best confidence: {conf}")
             return jsonify({"recognized": False, "confidence": float(conf), "error": "No matching student found"}), 200
         
-        if conf < 0.40:
+        if conf < 0.35:
             app.logger.warning(f"Confidence too low: {conf} for student {pred_label}")
             return jsonify({"recognized": False, "confidence": float(conf), "student_id": int(pred_label), "error": "Confidence too low - please try again"}), 200
         

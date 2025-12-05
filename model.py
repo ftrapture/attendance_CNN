@@ -127,11 +127,20 @@ def extract_face_encoding(image_path_or_array):
         if brightness < 100:
             image = cv2.convertScaleAbs(image, alpha=1.5, beta=30)
             image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2RGB)
+        elif brightness > 200:
+            image = cv2.convertScaleAbs(image, alpha=0.8, beta=-20)
+            image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2RGB)
         
         face_locations = face_recognition.face_locations(image, model="hog", number_of_times_to_upsample=1)
         
         if len(face_locations) == 0:
             face_locations = face_recognition.face_locations(image, model="hog", number_of_times_to_upsample=2)
+        
+        if len(face_locations) == 0:
+            try:
+                face_locations = face_recognition.face_locations(image, model="cnn")
+            except:
+                pass
         
         if len(face_locations) == 0:
             logger.warning("No face detected in image")
@@ -177,6 +186,12 @@ def extract_embedding_for_image(stream_or_bytes, require_liveness=False, additio
         
         if len(face_locations) == 0:
             face_locations = face_recognition.face_locations(rgb_img, model="hog", number_of_times_to_upsample=2)
+        
+        if len(face_locations) == 0:
+            try:
+                face_locations = face_recognition.face_locations(rgb_img, model="cnn")
+            except:
+                pass
         
         if len(face_locations) == 0:
             if require_liveness:
@@ -247,7 +262,7 @@ def load_model_if_exists():
         _model_cache = None
         return None
 
-def predict_with_model(model_data, face_encoding, tolerance=0.5):
+def predict_with_model(model_data, face_encoding, tolerance=0.6):
     try:
         if not model_data or 'encodings' not in model_data or 'labels' not in model_data:
             logger.error("Invalid model data")
