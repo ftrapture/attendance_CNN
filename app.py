@@ -217,31 +217,20 @@ def upload_face():
             
             img_array = np.array(img)
             img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+            gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
             
-            from deepface import DeepFace
+            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
             
-            try:
-                face_objs = DeepFace.extract_faces(
-                    img_path=img_bgr,
-                    detector_backend='opencv',
-                    enforce_detection=True
-                )
-                face_locations = face_objs
-            except Exception as face_error:
-                app.logger.error(f"Face detection error: {face_error}")
-                skipped_files.append(f"{file.filename} (processing failed)")
-                continue
-            
-            if len(face_locations) == 0:
+            if len(faces) == 0:
                 app.logger.warning("No face detected in: %s", file.filename)
                 skipped_files.append(f"{file.filename} (no face detected)")
                 continue
-            elif len(face_locations) > 1:
+            elif len(faces) > 1:
                 app.logger.warning("Multiple faces detected in: %s", file.filename)
                 skipped_files.append(f"{file.filename} (multiple faces)")
                 continue
             
-            gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
             laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
             
             if laplacian_var < 3:
