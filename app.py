@@ -218,7 +218,14 @@ def upload_face():
             
             import face_recognition
             rgb_img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-            face_locations = face_recognition.face_locations(rgb_img, model="hog")
+            
+            try:
+                face_locations = face_recognition.face_locations(rgb_img, model="hog")
+            except Exception as face_error:
+                app.logger.error(f"Face detection error: {face_error}")
+                return jsonify({
+                    "error": f"Failed to process {file.filename}. Please try a different image."
+                }), 400
             
             if len(face_locations) == 0:
                 app.logger.warning("No face detected in: %s", file.filename)
@@ -234,7 +241,7 @@ def upload_face():
             gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
             laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
             
-            if laplacian_var < 5:
+            if laplacian_var < 3:
                 return jsonify({
                     "error": f"{file.filename} appears to be AI-generated or animated. Please use real photos only."
                 }), 400
@@ -243,7 +250,7 @@ def upload_face():
             hist = cv2.normalize(hist, hist).flatten()
             unique_colors = np.count_nonzero(hist > 0.001)
             
-            if unique_colors < 25:
+            if unique_colors < 20:
                 return jsonify({
                     "error": f"{file.filename} appears to be animated or cartoon. Please use real photos only."
                 }), 400
@@ -263,7 +270,9 @@ def upload_face():
             app.logger.error("Error processing image: %s", e)
             import traceback
             app.logger.error(traceback.format_exc())
-            continue
+            return jsonify({
+                "error": f"Failed to process {file.filename}: {str(e)}"
+            }), 400
     
     app.logger.info("Total files processed: %d, embeddings: %d, file_data: %d", len(files), len(all_embeddings), len(file_data))
     
