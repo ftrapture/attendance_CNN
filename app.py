@@ -200,6 +200,8 @@ def upload_face():
     
     file_data = []
     all_embeddings = []
+    skipped_files = []
+    
     for file in files:
         if not file or file.filename == "":
             app.logger.warning("Skipping empty file")
@@ -216,44 +218,43 @@ def upload_face():
             img_array = np.array(img)
             img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
             
-            import face_recognition
-            rgb_img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            from deepface import DeepFace
             
             try:
-                face_locations = face_recognition.face_locations(rgb_img, model="hog")
+                face_objs = DeepFace.extract_faces(
+                    img_path=img_bgr,
+                    detector_backend='opencv',
+                    enforce_detection=True
+                )
+                face_locations = face_objs
             except Exception as face_error:
                 app.logger.error(f"Face detection error: {face_error}")
-                return jsonify({
-                    "error": f"Failed to process {file.filename}. Please try a different image."
-                }), 400
+                skipped_files.append(f"{file.filename} (processing failed)")
+                continue
             
             if len(face_locations) == 0:
                 app.logger.warning("No face detected in: %s", file.filename)
-                return jsonify({
-                    "error": f"No face detected in {file.filename}. Please upload a clear photo with a visible face."
-                }), 400
+                skipped_files.append(f"{file.filename} (no face detected)")
+                continue
             elif len(face_locations) > 1:
                 app.logger.warning("Multiple faces detected in: %s", file.filename)
-                return jsonify({
-                    "error": f"Multiple faces detected in {file.filename}. Please upload photos with only ONE person."
-                }), 400
+                skipped_files.append(f"{file.filename} (multiple faces)")
+                continue
             
             gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
             laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
             
             if laplacian_var < 3:
-                return jsonify({
-                    "error": f"{file.filename} appears to be AI-generated or animated. Please use real photos only."
-                }), 400
+                skipped_files.append(f"{file.filename} (AI/animated)")
+                continue
             
             hist = cv2.calcHist([img_bgr], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
             hist = cv2.normalize(hist, hist).flatten()
             unique_colors = np.count_nonzero(hist > 0.001)
             
             if unique_colors < 20:
-                return jsonify({
-                    "error": f"{file.filename} appears to be animated or cartoon. Please use real photos only."
-                }), 400
+                skipped_files.append(f"{file.filename} (cartoon/animated)")
+                continue
             
             encoding = extract_face_encoding(img_bgr)
             
@@ -263,23 +264,24 @@ def upload_face():
                 file_data.append((file.filename, file_bytes))
             else:
                 app.logger.warning("No face detected in: %s", file.filename)
-                return jsonify({
-                    "error": f"No face detected in {file.filename}. Please upload a clear photo with a visible face."
-                }), 400
+                skipped_files.append(f"{file.filename} (face encoding failed)")
+                continue
         except Exception as e:
             app.logger.error("Error processing image: %s", e)
             import traceback
             app.logger.error(traceback.format_exc())
-            return jsonify({
-                "error": f"Failed to process {file.filename}: {str(e)}"
-            }), 400
+            skipped_files.append(f"{file.filename} (error: {str(e)})")
+            continue
     
-    app.logger.info("Total files processed: %d, embeddings: %d, file_data: %d", len(files), len(all_embeddings), len(file_data))
+    app.logger.info("Total files processed: %d, embeddings: %d, file_data: %d, skipped: %d", len(files), len(all_embeddings), len(file_data), len(skipped_files))
     
     if len(all_embeddings) == 0:
-        embeddings_arr = np.array([])
-    else:
-        embeddings_arr = np.array(all_embeddings)
+        error_msg = "No valid images to save."
+        if skipped_files:
+            error_msg += " Skipped: " + ", ".join(skipped_files)
+        return jsonify({"error": error_msg}), 400
+    
+    embeddings_arr = np.array(all_embeddings) if len(all_embeddings) > 0 else np.array([])
     
     if len(embeddings_arr) > 1:
         import face_recognition
@@ -415,7 +417,13 @@ def upload_face():
         finally:
             conn.close()
     
-    return jsonify({"saved": saved, "message": f"Successfully registered student with {saved} images"})
+    success_msg = f"Successfully registered student with {saved} images"
+    if skipped_files:
+        success_msg += f". Skipped {len(skipped_files)} files: " + ", ".join(skipped_files[:3])
+        if len(skipped_files) > 3:
+            success_msg += f" and {len(skipped_files) - 3} more"
+    
+    return jsonify({"saved": saved, "skipped": len(skipped_files), "message": success_msg})
 
 @app.route("/train_model", methods=["GET"])
 def train_model_route():
@@ -424,9 +432,16 @@ def train_model_route():
         if status.get("running"):
             return jsonify({"status":"already_running", "progress": status.get("progress", 0)}), 202
         write_train_status({"running": True, "progress": 0, "message": "Initializing", "stage": "init"})
+        
+        def progress_with_completion(p, m, s):
+            if s == "complete":
+                write_train_status({"running": False, "progress": p, "message": m, "stage": s})
+            else:
+                write_train_status({"running": True, "progress": p, "message": m, "stage": s})
+        
         t = threading.Thread(
             target=train_model_background, 
-            args=(DATASET_DIR, lambda p,m,s: write_train_status({"running": True, "progress": p, "message": m, "stage": s})),
+            args=(DATASET_DIR, progress_with_completion),
             daemon=True
         )
         t.start()

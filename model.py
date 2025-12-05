@@ -6,7 +6,7 @@ import time
 
 import cv2
 import numpy as np
-import face_recognition
+from deepface import DeepFace
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -116,43 +116,52 @@ _model_cache = None
 def extract_face_encoding(image_path_or_array):
     try:
         if isinstance(image_path_or_array, str):
-            image = face_recognition.load_image_file(image_path_or_array)
+            img = cv2.imread(image_path_or_array)
         else:
-            if len(image_path_or_array.shape) == 3 and image_path_or_array.shape[2] == 3:
-                image = cv2.cvtColor(image_path_or_array, cv2.COLOR_BGR2RGB)
-            else:
-                image = image_path_or_array
+            img = image_path_or_array
         
-        brightness = np.mean(image)
+        if img is None:
+            logger.warning("Failed to load image")
+            return None
+        
+        brightness = np.mean(img)
         if brightness < 100:
-            image = cv2.convertScaleAbs(image, alpha=1.5, beta=30)
-            image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2RGB)
+            img = cv2.convertScaleAbs(img, alpha=1.5, beta=30)
         elif brightness > 200:
-            image = cv2.convertScaleAbs(image, alpha=0.8, beta=-20)
-            image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2RGB)
+            img = cv2.convertScaleAbs(img, alpha=0.8, beta=-20)
         
-        face_locations = face_recognition.face_locations(image, model="hog", number_of_times_to_upsample=1)
-        
-        if len(face_locations) == 0:
-            face_locations = face_recognition.face_locations(image, model="hog", number_of_times_to_upsample=2)
-        
-        if len(face_locations) == 0:
+        try:
+            result = DeepFace.represent(
+                img_path=img,
+                model_name='ArcFace',
+                enforce_detection=True,
+                detector_backend='opencv',
+                align=True
+            )
+            
+            if result and len(result) > 0:
+                embedding = result[0]['embedding']
+                return np.array(embedding)
+            else:
+                logger.warning("No face detected in image")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"DeepFace detection failed: {e}")
             try:
-                face_locations = face_recognition.face_locations(image, model="cnn")
+                result = DeepFace.represent(
+                    img_path=img,
+                    model_name='ArcFace',
+                    enforce_detection=False,
+                    detector_backend='opencv',
+                    align=True
+                )
+                if result and len(result) > 0:
+                    return np.array(result[0]['embedding'])
             except:
                 pass
-        
-        if len(face_locations) == 0:
-            logger.warning("No face detected in image")
             return None
-        
-        encodings = face_recognition.face_encodings(image, face_locations)
-        
-        if len(encodings) > 0:
-            return encodings[0]
-        else:
-            logger.warning("No face encoding generated")
-            return None
+            
     except Exception as e:
         logger.error(f"Error extracting face encoding: {e}")
         return None
@@ -262,7 +271,7 @@ def load_model_if_exists():
         _model_cache = None
         return None
 
-def predict_with_model(model_data, face_encoding, tolerance=0.6):
+def predict_with_model(model_data, face_encoding, tolerance=0.4):
     try:
         if not model_data or 'encodings' not in model_data or 'labels' not in model_data:
             logger.error("Invalid model data")
@@ -275,17 +284,24 @@ def predict_with_model(model_data, face_encoding, tolerance=0.6):
             logger.warning("No known encodings in model")
             return None, 0.0
         
-        distances = face_recognition.face_distance(known_encodings, face_encoding)
+        from scipy.spatial import distance
         
-        min_distance_idx = np.argmin(distances)
-        min_distance = distances[min_distance_idx]
+        best_match_idx = -1
+        best_similarity = -1
         
-        if min_distance <= tolerance:
-            label = known_labels[min_distance_idx]
-            confidence = 1.0 - min_distance
-            return label, float(confidence)
+        for idx, known_encoding in enumerate(known_encodings):
+            cosine_dist = distance.cosine(face_encoding, known_encoding)
+            similarity = 1 - cosine_dist
+            
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match_idx = idx
+        
+        if best_similarity >= tolerance:
+            label = known_labels[best_match_idx]
+            return label, float(best_similarity)
         else:
-            logger.warning(f"No match found. Minimum distance: {min_distance}")
+            logger.warning(f"No match found. Best similarity: {best_similarity}")
             return None, 0.0
     except Exception as e:
         logger.error(f"Error in prediction: {e}")
@@ -358,14 +374,14 @@ def train_model_background(dataset_dir, progress_callback=None):
                         labels.append(sid)
                         logger.info(f"Successfully processed {fn} for student {sid}")
                     else:
-                        logger.warning(f"No face detected in {fn}")
+                        logger.warning(f"No face detected in {fn} - skipping")
                         failed_images += 1
                 except Exception as e:
                     logger.error(f"Error processing {path}: {e}")
                     failed_images += 1
-                    continue
                 finally:
-                    del img
+                    if img is not None:
+                        del img
                     gc.collect()
             
             processed += 1
@@ -407,6 +423,8 @@ def train_model_background(dataset_dir, progress_callback=None):
         global _model_cache
         _model_cache = model_data
 
+        total_encodings = len(encodings)
+        
         del encodings
         del labels
         del model_data
@@ -415,10 +433,23 @@ def train_model_background(dataset_dir, progress_callback=None):
         if progress_callback:
             progress_callback(100, f"Training complete! {processed_images} images from {total_students} students (Failed: {failed_images})", "complete")
         logger.info(f"Training complete. Images: {processed_images}, Students: {total_students}, Failed: {failed_images}")
-        logger.info(f"Model contains {len(encodings)} encodings")
+        logger.info(f"Model contains {total_encodings} encodings")
 
     except Exception as e:
         logger.error(f"Critical error in training: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         if progress_callback:
-            progress_callback(0, "Training error", "error")
+            progress_callback(0, f"Training error: {str(e)}", "error")
+    finally:
+        try:
+            if 'encodings' in locals():
+                del encodings
+            if 'labels' in locals():
+                del labels
+            if 'model_data' in locals():
+                del model_data
+            gc.collect()
+        except:
+            pass
 
