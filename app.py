@@ -129,15 +129,45 @@ def add_student():
     cls = data.get("class","").strip()
     sec = data.get("sec","").strip()
     reg_no = data.get("reg_no","").strip()
+    
+    # Validate all required fields
     if not name:
-        return jsonify({"error":"name required"}), 400
+        return jsonify({"error":"Full name is required"}), 400
+    if not roll:
+        return jsonify({"error":"Roll number is required"}), 400
+    if not cls:
+        return jsonify({"error":"Class is required"}), 400
+    if not sec:
+        return jsonify({"error":"Section is required"}), 400
+    if not reg_no:
+        return jsonify({"error":"Registration number is required"}), 400
+    
+    # Validate full name (must have at least 2 words for first name + surname)
+    name_parts = name.split()
+    if len(name_parts) < 2:
+        return jsonify({"error":"Please enter full name including surname (e.g., John Doe)"}), 400
     
     conn = get_db()
     try:
         c = conn.cursor()
+        
+        # Check for duplicate name
         c.execute("SELECT id FROM students WHERE name = ?", (name,))
         if c.fetchone():
             return jsonify({"error": f"Student '{name}' already exists"}), 409
+        
+        # Check for duplicate roll number
+        c.execute("SELECT id, name FROM students WHERE roll = ?", (roll,))
+        existing = c.fetchone()
+        if existing:
+            return jsonify({"error": f"Roll number '{roll}' is already assigned to {existing[1]}"}), 409
+        
+        # Check for duplicate registration number
+        c.execute("SELECT id, name FROM students WHERE reg_no = ?", (reg_no,))
+        existing = c.fetchone()
+        if existing:
+            return jsonify({"error": f"Registration number '{reg_no}' is already assigned to {existing[1]}"}), 409
+            
     except Exception as e:
         app.logger.error("add_student error: %s", e)
         return jsonify({"error": str(e)}), 500
@@ -206,6 +236,42 @@ def upload_face():
             
             img_array = np.array(img)
             img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+            
+            # Detect multiple faces - reject if more than one
+            import face_recognition
+            face_locations = face_recognition.face_locations(img_bgr)
+            
+            if len(face_locations) == 0:
+                app.logger.warning("No face detected in: %s", file.filename)
+                return jsonify({
+                    "error": f"No face detected in {file.filename}. Please upload a clear photo with a visible face."
+                }), 400
+            elif len(face_locations) > 1:
+                app.logger.warning("Multiple faces detected in: %s", file.filename)
+                return jsonify({
+                    "error": f"Multiple faces detected in {file.filename}. Please upload photos with only ONE person."
+                }), 400
+            
+            # Check for AI-generated or animated images
+            # AI-generated images often have very smooth/uniform textures
+            gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            
+            # Very low variance = overly smooth (AI/CGI), very high = noise/animation
+            if laplacian_var < 20:
+                return jsonify({
+                    "error": f"{file.filename} appears to be AI-generated or animated. Please use real photos only."
+                }), 400
+            
+            # Check color distribution - cartoons/animations have limited color palette
+            hist = cv2.calcHist([img_bgr], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+            hist = cv2.normalize(hist, hist).flatten()
+            unique_colors = np.count_nonzero(hist > 0.001)
+            
+            if unique_colors < 50:  # Too few colors = animation/cartoon
+                return jsonify({
+                    "error": f"{file.filename} appears to be animated or cartoon. Please use real photos only."
+                }), 400
             
             # Use face_recognition library to extract face encoding
             encoding = extract_face_encoding(img_bgr)

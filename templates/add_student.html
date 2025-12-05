@@ -436,28 +436,28 @@
 
                 <div class="form-group">
                     <label class="form-label">Full Name <span style="color: #e53e3e;">*</span></label>
-                    <input type="text" class="form-control" id="nameInput" placeholder="Enter full name" required />
+                    <input type="text" class="form-control" id="nameInput" placeholder="Enter full name with surname" required />
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">Roll Number</label>
-                        <input type="text" class="form-control" id="rollInput" placeholder="e.g., 2024001" />
+                        <label class="form-label">Roll Number <span style="color: #e53e3e;">*</span></label>
+                        <input type="text" class="form-control" id="rollInput" placeholder="e.g., 2024001" required />
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Registration Number</label>
-                        <input type="text" class="form-control" id="regInput" placeholder="e.g., REG2024001" />
+                        <label class="form-label">Registration Number <span style="color: #e53e3e;">*</span></label>
+                        <input type="text" class="form-control" id="regInput" placeholder="e.g., REG2024001" required />
                     </div>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">Class</label>
-                        <input type="text" class="form-control" id="classInput" placeholder="e.g., 10th Grade" />
+                        <label class="form-label">Class <span style="color: #e53e3e;">*</span></label>
+                        <input type="text" class="form-control" id="classInput" placeholder="e.g., 10th Grade" required />
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Section</label>
-                        <input type="text" class="form-control" id="secInput" placeholder="e.g., A" />
+                        <label class="form-label">Section <span style="color: #e53e3e;">*</span></label>
+                        <input type="text" class="form-control" id="secInput" placeholder="e.g., A" required />
                     </div>
                 </div>
 
@@ -694,8 +694,41 @@
             const sec = document.getElementById('secInput').value.trim();
             const reg_no = document.getElementById('regInput').value.trim();
 
+            // Client-side validation
             if (!name) {
                 showNotification("Full Name is required", "error");
+                document.getElementById('nameInput').focus();
+                return;
+            }
+            
+            if (!roll) {
+                showNotification("Roll Number is required", "error");
+                document.getElementById('rollInput').focus();
+                return;
+            }
+            
+            if (!cls) {
+                showNotification("Class is required", "error");
+                document.getElementById('classInput').focus();
+                return;
+            }
+            
+            if (!sec) {
+                showNotification("Section is required", "error");
+                document.getElementById('secInput').focus();
+                return;
+            }
+            
+            if (!reg_no) {
+                showNotification("Registration Number is required", "error");
+                document.getElementById('regInput').focus();
+                return;
+            }
+            
+            // Validate full name (must have first name + surname)
+            const nameParts = name.split(' ').filter(part => part.length > 0);
+            if (nameParts.length < 2) {
+                showNotification("Please enter full name including surname (e.g., John Doe)", "error");
                 document.getElementById('nameInput').focus();
                 return;
             }
@@ -779,18 +812,22 @@
                 return;
             }
 
-            showNotification('Compressing images...', 'info');
+            showNotification('Compressing and validating images...', 'info');
             
             // Compress all images
-            const compressedFiles = await Promise.all(
-                imageFiles.map(file => compressImage(file))
-            );
+            for (let i = 0; i < imageFiles.length; i++) {
+                try {
+                    const compressedFile = await compressImage(imageFiles[i]);
+                    selectedFiles.push(compressedFile);
+                } catch (err) {
+                    showNotification(`Failed to process ${imageFiles[i].name}`, 'error');
+                }
+            }
             
-            selectedFiles = [...selectedFiles, ...compressedFiles];
             updatePreview();
             
             document.getElementById('nextStep2').disabled = selectedFiles.length === 0;
-            showNotification(`${compressedFiles.length} image(s) ready`, 'success');
+            showNotification(`${selectedFiles.length} image(s) ready`, 'success');
         }
 
         // Update Preview
