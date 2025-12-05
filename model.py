@@ -80,33 +80,35 @@ def analyze_frame_sequence(frames):
     face_locations_list = []
     valid_frames = []
     
+    try:
+        cascade_path = os.path.join(cv2.__path__[0], 'data', 'haarcascade_frontalface_default.xml')
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+    except:
+        face_cascade = cv2.CascadeClassifier()
+    
     for frame in frames:
         if frame is None or frame.size == 0:
             continue
         
         if len(frame.shape) == 3 and frame.shape[2] == 3:
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         else:
-            rgb_frame = frame
+            gray_frame = frame
         
-        brightness = np.mean(rgb_frame)
+        brightness = np.mean(gray_frame)
         if brightness < 100:
-            rgb_frame = cv2.convertScaleAbs(rgb_frame, alpha=1.5, beta=30)
+            gray_frame = cv2.convertScaleAbs(gray_frame, alpha=1.5, beta=30)
         
-        face_locations = face_recognition.face_locations(rgb_frame, model="hog", number_of_times_to_upsample=1)
+        faces = face_cascade.detectMultiScale(gray_frame, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
         
-        if len(face_locations) == 1:
-            face_locations_list.append(face_locations[0])
+        if len(faces) == 1:
+            x, y, w, h = faces[0]
+            face_locations_list.append((y, x+w, y+h, x))
             valid_frames.append(frame)
-        elif len(face_locations) > 1:
+        elif len(faces) > 1:
             logger.warning("Multiple faces detected in frame")
         else:
-            face_locations = face_recognition.face_locations(rgb_frame, model="hog", number_of_times_to_upsample=2)
-            if len(face_locations) == 1:
-                face_locations_list.append(face_locations[0])
-                valid_frames.append(frame)
-            else:
-                logger.warning("No face detected in frame")
+            logger.warning("No face detected in frame")
     
     return valid_frames, face_locations_list
 
@@ -183,43 +185,50 @@ def extract_embedding_for_image(stream_or_bytes, require_liveness=False, additio
                 return None, {"is_live": False, "reason": "Invalid image"}
             return None
         
-        rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        bgr_img = img
         
-        brightness = np.mean(rgb_img)
+        brightness = np.mean(bgr_img)
         if brightness < 100:
-            rgb_img = cv2.convertScaleAbs(rgb_img, alpha=1.5, beta=30)
+            bgr_img = cv2.convertScaleAbs(bgr_img, alpha=1.5, beta=30)
         elif brightness > 200:
-            rgb_img = cv2.convertScaleAbs(rgb_img, alpha=0.8, beta=-20)
+            bgr_img = cv2.convertScaleAbs(bgr_img, alpha=0.8, beta=-20)
         
-        face_locations = face_recognition.face_locations(rgb_img, model="hog", number_of_times_to_upsample=1)
-        
-        if len(face_locations) == 0:
-            face_locations = face_recognition.face_locations(rgb_img, model="hog", number_of_times_to_upsample=2)
-        
-        if len(face_locations) == 0:
+        try:
+            result = DeepFace.represent(
+                img_path=bgr_img,
+                model_name='ArcFace',
+                enforce_detection=True,
+                detector_backend='opencv',
+                align=True
+            )
+            
+            if result and len(result) > 0:
+                encoding = np.array(result[0]['embedding'])
+            else:
+                if require_liveness:
+                    return None, {"is_live": False, "reason": "No face detected"}
+                return None
+                
+        except Exception as e:
+            logger.warning(f"Face detection failed: {e}")
             try:
-                face_locations = face_recognition.face_locations(rgb_img, model="cnn")
+                result = DeepFace.represent(
+                    img_path=bgr_img,
+                    model_name='ArcFace',
+                    enforce_detection=False,
+                    detector_backend='opencv',
+                    align=True
+                )
+                if result and len(result) > 0:
+                    encoding = np.array(result[0]['embedding'])
+                else:
+                    if require_liveness:
+                        return None, {"is_live": False, "reason": "No face detected"}
+                    return None
             except:
-                pass
-        
-        if len(face_locations) == 0:
-            if require_liveness:
-                return None, {"is_live": False, "reason": "No face detected"}
-            return None
-        
-        encodings = face_recognition.face_encodings(rgb_img, face_locations)
-        
-        if len(encodings) == 0:
-            if require_liveness:
-                return None, {"is_live": False, "reason": "No face encoding generated"}
-            return None
-        
-        encoding = encodings[0]
-        
-        if encoding is None:
-            if require_liveness:
-                return None, {"is_live": False, "reason": "No face detected"}
-            return None
+                if require_liveness:
+                    return None, {"is_live": False, "reason": "No face detected"}
+                return None
         
         if require_liveness and additional_frames:
             all_frames = [img] + additional_frames
@@ -284,28 +293,52 @@ def predict_with_model(model_data, face_encoding, tolerance=0.4):
             logger.warning("No known encodings in model")
             return None, 0.0
         
+        if face_encoding is None or len(face_encoding) == 0:
+            logger.error("Invalid face encoding provided")
+            return None, 0.0
+        
+        if np.any(np.isnan(face_encoding)) or np.any(np.isinf(face_encoding)):
+            logger.error("Face encoding contains NaN or Inf values")
+            return None, 0.0
+        
         from scipy.spatial import distance
         
         best_match_idx = -1
         best_similarity = -1
         
         for idx, known_encoding in enumerate(known_encodings):
-            cosine_dist = distance.cosine(face_encoding, known_encoding)
-            similarity = 1 - cosine_dist
-            
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_match_idx = idx
+            try:
+                if known_encoding is None or len(known_encoding) == 0:
+                    continue
+                
+                if len(known_encoding) != len(face_encoding):
+                    logger.warning(f"Encoding size mismatch: {len(known_encoding)} vs {len(face_encoding)}")
+                    continue
+                
+                cosine_dist = distance.cosine(face_encoding, known_encoding)
+                
+                if np.isnan(cosine_dist) or np.isinf(cosine_dist):
+                    logger.warning(f"Invalid distance for encoding {idx}")
+                    continue
+                
+                similarity = 1 - cosine_dist
+                
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match_idx = idx
+            except Exception as comp_error:
+                logger.warning(f"Error comparing with encoding {idx}: {comp_error}")
+                continue
         
         if best_similarity >= tolerance:
             label = known_labels[best_match_idx]
             return label, float(best_similarity)
         else:
             logger.warning(f"No match found. Best similarity: {best_similarity}")
-            return None, 0.0
+            return None, float(best_similarity) if best_similarity >= 0 else 0.0
     except Exception as e:
         logger.error(f"Error in prediction: {e}")
-        raise
+        return None, 0.0
 
 def train_model_background(dataset_dir, progress_callback=None):
     encodings = []

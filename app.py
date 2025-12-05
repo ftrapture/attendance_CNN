@@ -219,8 +219,16 @@ def upload_face():
             img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
             gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
             
-            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+            try:
+                cascade_path = os.path.join(cv2.__path__[0], 'data', 'haarcascade_frontalface_default.xml')
+                face_cascade = cv2.CascadeClassifier(cascade_path)
+                if face_cascade.empty():
+                    raise Exception("Failed to load Haar Cascade")
+                faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+            except Exception as cascade_error:
+                app.logger.error(f"Haar Cascade error: {cascade_error}")
+                skipped_files.append(f"{file.filename} (face detection failed)")
+                continue
             
             if len(faces) == 0:
                 app.logger.warning("No face detected in: %s", file.filename)
@@ -247,10 +255,15 @@ def upload_face():
             
             encoding = extract_face_encoding(img_bgr)
             
-            if encoding is not None:
-                app.logger.info("Face detected and encoded for: %s", file.filename)
-                all_embeddings.append(encoding)
-                file_data.append((file.filename, file_bytes))
+            if encoding is not None and len(encoding) > 0:
+                if not np.any(np.isnan(encoding)) and not np.any(np.isinf(encoding)):
+                    app.logger.info("Face detected and encoded for: %s", file.filename)
+                    all_embeddings.append(encoding)
+                    file_data.append((file.filename, file_bytes))
+                else:
+                    app.logger.warning("Invalid encoding (NaN/Inf) for: %s", file.filename)
+                    skipped_files.append(f"{file.filename} (invalid encoding)")
+                    continue
             else:
                 app.logger.warning("No face detected in: %s", file.filename)
                 skipped_files.append(f"{file.filename} (face encoding failed)")
@@ -273,17 +286,25 @@ def upload_face():
     embeddings_arr = np.array(all_embeddings) if len(all_embeddings) > 0 else np.array([])
     
     if len(embeddings_arr) > 1:
-        import face_recognition
+        from scipy.spatial import distance
         distances = []
         for i in range(1, len(embeddings_arr)):
-            dist = face_recognition.face_distance([embeddings_arr[0]], embeddings_arr[i])[0]
-            distances.append(dist)
-        avg_dist = np.mean(distances)
-        if avg_dist > 0.65:
-            return jsonify({"error": "Images appear to be different people. Upload images of the same person"}), 400
+            try:
+                if len(embeddings_arr[0]) > 0 and len(embeddings_arr[i]) > 0:
+                    cosine_dist = distance.cosine(embeddings_arr[0], embeddings_arr[i])
+                    if not np.isnan(cosine_dist) and not np.isinf(cosine_dist):
+                        distances.append(cosine_dist)
+            except Exception as e:
+                app.logger.warning(f"Distance calculation failed: {e}")
+                continue
+        
+        if distances:
+            avg_dist = np.mean(distances)
+            if avg_dist > 0.35:
+                return jsonify({"error": "Images appear to be different people. Upload images of the same person"}), 400
     
     app.logger.info("Checking for duplicate faces across all students...")
-    import face_recognition
+    from scipy.spatial import distance
     if os.path.exists(DATASET_DIR) and os.listdir(DATASET_DIR):
         for existing_sid in os.listdir(DATASET_DIR):
             existing_folder = os.path.join(DATASET_DIR, existing_sid)
@@ -304,9 +325,16 @@ def upload_face():
                         continue
                     
                     for new_emb in embeddings_arr:
-                        dist = face_recognition.face_distance([existing_encoding], new_emb)[0]
-                        if dist < 0.45:
-                            return jsonify({"error": f"This image matches with an existing student ID {existing_sid}. Please upload different pictures"}), 400
+                        try:
+                            if len(existing_encoding) > 0 and len(new_emb) > 0:
+                                cosine_dist = distance.cosine(existing_encoding, new_emb)
+                                if not np.isnan(cosine_dist) and not np.isinf(cosine_dist):
+                                    similarity = 1 - cosine_dist
+                                    if similarity >= 0.55:
+                                        return jsonify({"error": f"This image matches with an existing student ID {existing_sid}. Please upload different pictures"}), 400
+                        except Exception as dist_error:
+                            app.logger.warning(f"Distance calculation error: {dist_error}")
+                            continue
                 except Exception as e:
                     app.logger.error("Error checking existing image: %s", e)
                     continue
@@ -320,7 +348,7 @@ def upload_face():
     os.makedirs(folder, exist_ok=True)
     
     existing_embeddings = []
-    import face_recognition
+    from scipy.spatial import distance
     if os.path.exists(folder) and len(os.listdir(folder)) > 0:
         for fname in os.listdir(folder):
             try:
@@ -338,10 +366,21 @@ def upload_face():
     
     if existing_embeddings:
         for new_emb in embeddings_arr:
-            distances = face_recognition.face_distance(existing_embeddings, new_emb)
-            min_dist = np.min(distances)
-            if min_dist < 0.45:
-                return jsonify({"error": "This image already exists in this student's records. Please upload different pictures"}), 400
+            try:
+                similarities = []
+                for existing_emb in existing_embeddings:
+                    if len(existing_emb) > 0 and len(new_emb) > 0:
+                        cosine_dist = distance.cosine(existing_emb, new_emb)
+                        if not np.isnan(cosine_dist) and not np.isinf(cosine_dist):
+                            similarities.append(1 - cosine_dist)
+                
+                if similarities:
+                    max_similarity = np.max(similarities)
+                    if max_similarity >= 0.55:
+                        return jsonify({"error": "This image already exists in this student's records. Please upload different pictures"}), 400
+            except Exception as e:
+                app.logger.error(f"Error comparing embeddings: {e}")
+                continue
     
     saved = 0
     app.logger.info("Saving %d files to folder %s", len(file_data), folder)
@@ -483,6 +522,20 @@ def recognize_face():
             
             emb, liveness_result = result
             
+            if emb is None or len(emb) == 0:
+                return jsonify({
+                    "recognized": False,
+                    "error": "Face encoding failed",
+                    "liveness": liveness_result
+                }), 200
+            
+            if np.any(np.isnan(emb)) or np.any(np.isinf(emb)):
+                return jsonify({
+                    "recognized": False,
+                    "error": "Invalid face encoding",
+                    "liveness": liveness_result
+                }), 200
+            
             if not liveness_result.get("is_live", False):
                 return jsonify({
                     "recognized": False,
@@ -492,9 +545,14 @@ def recognize_face():
         else:
             app.logger.warning("Single frame mode - liveness detection disabled")
             emb = extract_embedding_for_image(img_file.stream)
-            if emb is None:
+            if emb is None or len(emb) == 0:
                 return jsonify({"recognized": False, "error":"no face detected"}), 200
+            if np.any(np.isnan(emb)) or np.any(np.isinf(emb)):
+                return jsonify({"recognized": False, "error":"invalid face encoding"}), 200
             liveness_result = {"is_live": False, "reason": "Single frame mode"}
+        
+        if emb is None or len(emb) == 0:
+            return jsonify({"recognized": False, "error":"face encoding failed"}), 200
         
         clf = load_model_if_exists()
         if clf is None:
@@ -505,7 +563,9 @@ def recognize_face():
             app.logger.info(f"Prediction result: label={pred_label}, confidence={conf}")
         except Exception as e:
             app.logger.error(f"prediction error: {e}")
-            return jsonify({"recognized": False, "error":"prediction failed"}), 500
+            import traceback
+            app.logger.error(traceback.format_exc())
+            return jsonify({"recognized": False, "error":"prediction failed"}), 200
         
         if pred_label is None:
             app.logger.warning(f"No match found. Best confidence: {conf}")
