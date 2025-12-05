@@ -451,7 +451,7 @@ def recognize_face():
             app.logger.error(f"prediction error: {e}")
             return jsonify({"recognized": False, "error":"prediction failed"}), 500
         
-        if conf < 0.45:
+        if pred_label is None or conf < 0.45:
             return jsonify({"recognized": False, "confidence": float(conf), "error": "confidence too low"}), 200
         
         student_id = int(pred_label)
