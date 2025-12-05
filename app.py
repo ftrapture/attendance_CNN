@@ -24,6 +24,10 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config['JSON_SORT_KEYS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB limit for high-res phone images
 
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({"error": "File too large. Please compress images before uploading."}), 413
+
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -98,7 +102,8 @@ def attendance_stats():
     import pandas as pd
     conn = get_db()
     try:
-        df = pd.read_sql_query("SELECT check_in_time FROM attendance WHERE check_out_time IS NULL", conn)
+        # Get all attendance records (both checked in and checked out)
+        df = pd.read_sql_query("SELECT check_in_time FROM attendance", conn)
         if df.empty:
             days = [(datetime.datetime.now(LOCAL_TZ).date() - datetime.timedelta(days=i)).strftime("%d-%b") for i in range(29, -1, -1)]
             return jsonify({"dates": days, "counts": [0]*30})

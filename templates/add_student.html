@@ -473,8 +473,26 @@
 
             <!-- Step 2: Upload Photos -->
             <div class="step-content" id="step2">
-                <h2 class="step-title">Upload Face Photos</h2>
-                <p class="step-description">Upload multiple clear photos of the student's face (at least 5 images recommended)</p>
+                <h2 class="step-title">Upload Your Photos</h2>
+                <p class="step-description">Upload 3-5 clear photos for better recognition</p>
+
+                <!-- Camera Capture Section -->
+                <div style="margin-bottom: 20px;">
+                    <button type="button" class="btn btn-primary" id="openCameraBtn" style="width: 100%; margin-bottom: 15px;">
+                        <i class="fas fa-camera"></i> Take Photos with Camera
+                    </button>
+                    <div id="cameraSection" style="display: none;">
+                        <video id="cameraVideo" autoplay playsinline style="width: 100%; max-height: 400px; border-radius: 12px; transform: scaleX(-1); background: #000;"></video>
+                        <div style="margin-top: 10px; display: flex; gap: 10px; justify-content: center;">
+                            <button type="button" class="btn btn-success" id="captureBtn">
+                                <i class="fas fa-camera"></i> Capture
+                            </button>
+                            <button type="button" class="btn btn-danger" id="closeCameraBtn">
+                                <i class="fas fa-times"></i> Close Camera
+                            </button>
+                        </div>
+                    </div>
+                </div>
 
                 <div class="upload-area" id="uploadArea">
                     <i class="fas fa-cloud-upload-alt upload-icon"></i>
@@ -524,6 +542,97 @@
         let studentId = null;
         let tempData = null;
         let selectedFiles = [];
+        let cameraStream = null;
+
+        // Camera Functions
+        document.getElementById('openCameraBtn').addEventListener('click', async () => {
+            const cameraSection = document.getElementById('cameraSection');
+            const video = document.getElementById('cameraVideo');
+            
+            try {
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                video.srcObject = cameraStream;
+                cameraSection.style.display = 'block';
+                document.getElementById('openCameraBtn').style.display = 'none';
+            } catch (err) {
+                showNotification('Camera access denied: ' + err.message, 'error');
+            }
+        });
+
+        document.getElementById('closeCameraBtn').addEventListener('click', () => {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+            document.getElementById('cameraSection').style.display = 'none';
+            document.getElementById('openCameraBtn').style.display = 'block';
+        });
+
+        document.getElementById('captureBtn').addEventListener('click', async () => {
+            const video = document.getElementById('cameraVideo');
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            
+            // Mirror the capture
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0);
+            
+            // Convert to blob with compression
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+            const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
+            
+            selectedFiles.push(file);
+            updatePreview();
+            document.getElementById('nextStep2').disabled = false;
+            showNotification('Photo captured!', 'success');
+        });
+
+        // Compress image file before upload
+        async function compressImage(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        let width = img.width;
+                        let height = img.height;
+                        
+                        // Resize if too large
+                        const maxDimension = 1920;
+                        if (width > maxDimension || height > maxDimension) {
+                            if (width > height) {
+                                height = (height / width) * maxDimension;
+                                width = maxDimension;
+                            } else {
+                                width = (width / height) * maxDimension;
+                                height = maxDimension;
+                            }
+                        }
+                        
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        canvas.toBlob((blob) => {
+                            const compressedFile = new File([blob], file.name, {
+                                type: 'image/jpeg',
+                                lastModified: Date.now()
+                            });
+                            resolve(compressedFile);
+                        }, 'image/jpeg', 0.85);
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
 
         // Notification System
         function showNotification(message, type = "info") {
@@ -656,13 +765,13 @@
         });
 
         // File Input Change
-        document.getElementById('uploadInput').addEventListener('change', (e) => {
+        document.getElementById('uploadInput').addEventListener('change', async (e) => {
             const files = Array.from(e.target.files);
-            handleFiles(files);
+            await handleFiles(files);
         });
 
         // Handle Files
-        function handleFiles(files) {
+        async function handleFiles(files) {
             const imageFiles = files.filter(file => file.type.startsWith('image/'));
             
             if (imageFiles.length === 0) {
@@ -670,10 +779,18 @@
                 return;
             }
 
-            selectedFiles = [...selectedFiles, ...imageFiles];
+            showNotification('Compressing images...', 'info');
+            
+            // Compress all images
+            const compressedFiles = await Promise.all(
+                imageFiles.map(file => compressImage(file))
+            );
+            
+            selectedFiles = [...selectedFiles, ...compressedFiles];
             updatePreview();
             
             document.getElementById('nextStep2').disabled = selectedFiles.length === 0;
+            showNotification(`${compressedFiles.length} image(s) ready`, 'success');
         }
 
         // Update Preview
