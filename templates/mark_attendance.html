@@ -69,7 +69,6 @@
                 margin-bottom: 1rem;
             }
 
-            /* Camera Section - Mobile Optimized */
             .camera-container {
                 position: relative;
                 width: 100%;
@@ -258,7 +257,6 @@
                 }
             }
 
-            /* Loading Spinner */
             .spinner {
                 display: inline-block;
                 width: 16px;
@@ -273,12 +271,10 @@
                 to { transform: rotate(360deg); }
             }
 
-            /* Smooth scrolling */
             html {
                 scroll-behavior: smooth;
             }
 
-            /* Disable selection on buttons */
             button {
                 -webkit-user-select: none;
                 user-select: none;
@@ -367,7 +363,6 @@
                     </button>
                 </div>
 
-                <!-- RECOGNIZED LIST -->
                 <div class="recognized-section">
                     <h6>✅ Recognized Today</h6>
                     <ul id="recognizedList" class="list-group"></ul>
@@ -376,7 +371,6 @@
         </div>
 
         <script type="text/javascript">
-            // Mark Attendance Script - v2.0
             function showNotification(message, type = "info") {
                 const div = document.createElement("div");
                 div.className = `notification ${type}`;
@@ -397,7 +391,6 @@
             let interval = null;
             let isProcessing = false;
 
-            // Check camera availability
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 document.getElementById("markStatus").innerHTML = 
                     '<div class="alert alert-danger py-2 px-3">⚠️ Camera not supported. Use Upload mode.</div>';
@@ -482,11 +475,9 @@
                     canvas.height = video.videoHeight || 480;
                     const ctx = canvas.getContext("2d");
                     
-                    // Mirror the canvas to match video display
                     ctx.translate(canvas.width, 0);
                     ctx.scale(-1, 1);
                     
-                    // Capture multiple frames
                     const frames = [];
                     for (let i = 0; i < 5; i++) {
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);

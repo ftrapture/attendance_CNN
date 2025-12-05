@@ -12,16 +12,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def detect_liveness(image_frames, face_locations_list):
-    """
-    Detect if the person is physically present (not a photo/video).
-    Checks for:
-    1. Multiple frames with face detected
-    2. Face position variation (natural head movement)
-    3. Lighting/texture variations
-    4. Face size consistency (no zoom patterns from screen)
-    
-    Returns: (is_live: bool, confidence: float, reason: str)
-    """
     if len(image_frames) < 3:
         return False, 0.0, "Insufficient frames for liveness detection"
     
@@ -29,7 +19,6 @@ def detect_liveness(image_frames, face_locations_list):
         return False, 0.0, "Face not detected consistently"
     
     try:
-        # Check 1: Face position variation (natural micro-movements)
         positions = []
         sizes = []
         for (top, right, bottom, left) in face_locations_list:
@@ -42,32 +31,25 @@ def detect_liveness(image_frames, face_locations_list):
         positions = np.array(positions)
         sizes = np.array(sizes)
         
-        # Calculate movement variance
         position_variance = np.var(positions, axis=0).sum()
         size_variance = np.var(sizes)
         
-        # Relaxed thresholds for low-quality cameras
-        # Allow minimal or no movement for static capture
-        if position_variance > 8000:  # Only reject extreme movement (video replay)
+        if position_variance > 8000:
             return False, 0.0, "Excessive movement detected (possible video replay)"
         
-        # Check 2: Texture analysis - photos have uniform texture, real faces have variance
         texture_scores = []
         for frame in image_frames:
             if frame is None or frame.size == 0:
                 continue
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
-            # Calculate Laplacian variance (texture complexity)
             laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
             texture_scores.append(laplacian_var)
         
         if len(texture_scores) > 0:
             avg_texture = np.mean(texture_scores)
-            # Relaxed texture check - only reject extremely smooth (high-quality prints)
-            if avg_texture < 10:  # Only very smooth = high-quality printed photo
+            if avg_texture < 10:
                 return False, 0.0, "Low texture complexity (possible printed photo)"
         
-        # Check 3: Lighting variation - real faces have subtle lighting changes
         brightness_values = []
         for frame in image_frames:
             if frame is None or frame.size == 0:
@@ -77,22 +59,17 @@ def detect_liveness(image_frames, face_locations_list):
         
         if len(brightness_values) >= 3:
             brightness_variance = np.var(brightness_values)
-            # Very relaxed lighting check - only basic validation
-            # Most cameras will pass this check
-            pass  # Allow any lighting variance for low-quality cameras
+            pass
         
-        # Check 4: Face size consistency (real face vs zoomed screen)
         if len(sizes) >= 3:
             size_std = np.std(sizes)
             size_mean = np.mean(sizes)
             size_cv = size_std / size_mean if size_mean > 0 else 0
             
-            # Relaxed size check - allow natural hand shake
-            if size_cv > 0.35:  # Only reject extreme size variation
+            if size_cv > 0.35:
                 return False, 0.0, "Inconsistent face size (possible screen display)"
         
-        # All checks passed
-        confidence = min(1.0, position_variance / 1000.0)  # Normalize to 0-1
+        confidence = min(1.0, position_variance / 1000.0)
         return True, confidence, "Liveness verified"
         
     except Exception as e:
@@ -100,10 +77,6 @@ def detect_liveness(image_frames, face_locations_list):
         return False, 0.0, f"Liveness detection failed: {str(e)}"
 
 def analyze_frame_sequence(frames):
-    """
-    Analyze a sequence of frames for liveness detection.
-    Returns face locations and validity.
-    """
     face_locations_list = []
     valid_frames = []
     
@@ -111,27 +84,23 @@ def analyze_frame_sequence(frames):
         if frame is None or frame.size == 0:
             continue
         
-        # Convert to RGB
         if len(frame.shape) == 3 and frame.shape[2] == 3:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         else:
             rgb_frame = frame
         
-        # Enhance brightness if needed
         brightness = np.mean(rgb_frame)
         if brightness < 100:
             rgb_frame = cv2.convertScaleAbs(rgb_frame, alpha=1.5, beta=30)
         
-        # Detect faces with HOG (faster)
         face_locations = face_recognition.face_locations(rgb_frame, model="hog", number_of_times_to_upsample=1)
         
-        if len(face_locations) == 1:  # Exactly one face
+        if len(face_locations) == 1:
             face_locations_list.append(face_locations[0])
             valid_frames.append(frame)
         elif len(face_locations) > 1:
             logger.warning("Multiple faces detected in frame")
         else:
-            # Try with more upsampling
             face_locations = face_recognition.face_locations(rgb_frame, model="hog", number_of_times_to_upsample=2)
             if len(face_locations) == 1:
                 face_locations_list.append(face_locations[0])
@@ -145,44 +114,32 @@ MODEL_PATH = "model.pkl"
 _model_cache = None
 
 def extract_face_encoding(image_path_or_array):
-    """
-    Extract 128-dimensional face encoding using face_recognition library.
-    Returns the encoding or None if no face is found.
-    """
     try:
-        # Load image if path is provided, otherwise use array
         if isinstance(image_path_or_array, str):
             image = face_recognition.load_image_file(image_path_or_array)
         else:
-            # Convert BGR to RGB if it's a cv2 image
             if len(image_path_or_array.shape) == 3 and image_path_or_array.shape[2] == 3:
                 image = cv2.cvtColor(image_path_or_array, cv2.COLOR_BGR2RGB)
             else:
                 image = image_path_or_array
         
-        # Enhance image quality for better detection
-        # Increase brightness if too dark
         brightness = np.mean(image)
         if brightness < 100:
             image = cv2.convertScaleAbs(image, alpha=1.5, beta=30)
             image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2RGB)
         
-        # Try HOG model first (faster), then CNN if fails
         face_locations = face_recognition.face_locations(image, model="hog", number_of_times_to_upsample=1)
         
         if len(face_locations) == 0:
-            # Try with more upsampling for small/distant faces
             face_locations = face_recognition.face_locations(image, model="hog", number_of_times_to_upsample=2)
         
         if len(face_locations) == 0:
             logger.warning("No face detected in image")
             return None
         
-        # Get face encodings (128-dimensional vectors)
         encodings = face_recognition.face_encodings(image, face_locations)
         
         if len(encodings) > 0:
-            # Return the first face encoding found
             return encodings[0]
         else:
             logger.warning("No face encoding generated")
@@ -192,19 +149,6 @@ def extract_face_encoding(image_path_or_array):
         return None
 
 def extract_embedding_for_image(stream_or_bytes, require_liveness=False, additional_frames=None):
-    """
-    Extract face encoding from uploaded image stream or bytes.
-    Uses face_recognition library.
-    
-    Args:
-        stream_or_bytes: Image data stream or bytes
-        require_liveness: If True, perform liveness detection
-        additional_frames: List of additional frames for liveness detection
-    
-    Returns:
-        If require_liveness=False: encoding or None
-        If require_liveness=True: (encoding, liveness_result) or (None, error_dict)
-    """
     data = None
     arr = None
     img = None
@@ -221,7 +165,6 @@ def extract_embedding_for_image(stream_or_bytes, require_liveness=False, additio
                 return None, {"is_live": False, "reason": "Invalid image"}
             return None
         
-        # Use face_recognition library
         encoding = extract_face_encoding(img)
         
         if encoding is None:
@@ -229,7 +172,6 @@ def extract_embedding_for_image(stream_or_bytes, require_liveness=False, additio
                 return None, {"is_live": False, "reason": "No face detected"}
             return None
         
-        # Perform liveness detection if requested
         if require_liveness and additional_frames:
             all_frames = [img] + additional_frames
             valid_frames, face_locations = analyze_frame_sequence(all_frames)
@@ -281,12 +223,6 @@ def load_model_if_exists():
         return None
 
 def predict_with_model(model_data, face_encoding, tolerance=0.6):
-    """
-    Predict identity using face encodings and distance-based matching.
-    model_data is a dict with:
-        - 'encodings': list of known face encodings
-        - 'labels': list of corresponding student IDs
-    """
     try:
         if not model_data or 'encodings' not in model_data or 'labels' not in model_data:
             logger.error("Invalid model data")
@@ -299,17 +235,13 @@ def predict_with_model(model_data, face_encoding, tolerance=0.6):
             logger.warning("No known encodings in model")
             return None, 0.0
         
-        # Calculate face distances
         distances = face_recognition.face_distance(known_encodings, face_encoding)
         
-        # Find the best match
         min_distance_idx = np.argmin(distances)
         min_distance = distances[min_distance_idx]
         
-        # Check if the distance is within tolerance
         if min_distance <= tolerance:
             label = known_labels[min_distance_idx]
-            # Convert distance to confidence score (0 distance = 1.0 confidence)
             confidence = 1.0 - min_distance
             return label, float(confidence)
         else:
@@ -320,10 +252,6 @@ def predict_with_model(model_data, face_encoding, tolerance=0.6):
         raise
 
 def train_model_background(dataset_dir, progress_callback=None):
-    """
-    Train the face recognition model using face_recognition library.
-    Generates 128-dimensional encodings for all student images.
-    """
     encodings = []
     labels = []
     failed_images = 0
@@ -382,7 +310,6 @@ def train_model_background(dataset_dir, progress_callback=None):
                         failed_images += 1
                         continue
                     
-                    # Extract face encoding using face_recognition
                     encoding = extract_face_encoding(img)
                     
                     if encoding is not None:
@@ -412,7 +339,6 @@ def train_model_background(dataset_dir, progress_callback=None):
         if progress_callback:
             progress_callback(70, f"Preparing data: {len(encodings)} samples, {failed_images} failed", "preparing")
 
-        # Create model data structure
         model_data = {
             'encodings': encodings,
             'labels': labels

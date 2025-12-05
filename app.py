@@ -22,7 +22,7 @@ LOCAL_TZ = pytz.timezone('Asia/Kolkata')
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config['JSON_SORT_KEYS'] = False
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB limit for high-res phone images
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 @app.errorhandler(413)
 def request_entity_too_large(error):
@@ -102,7 +102,6 @@ def attendance_stats():
     import pandas as pd
     conn = get_db()
     try:
-        # Get all attendance records (both checked in and checked out)
         df = pd.read_sql_query("SELECT check_in_time FROM attendance", conn)
         if df.empty:
             days = [(datetime.datetime.now(LOCAL_TZ).date() - datetime.timedelta(days=i)).strftime("%d-%b") for i in range(29, -1, -1)]
@@ -130,7 +129,6 @@ def add_student():
     sec = data.get("sec","").strip()
     reg_no = data.get("reg_no","").strip()
     
-    # Validate all required fields
     if not name:
         return jsonify({"error":"Full name is required"}), 400
     if not roll:
@@ -142,7 +140,6 @@ def add_student():
     if not reg_no:
         return jsonify({"error":"Registration number is required"}), 400
     
-    # Validate full name (must have at least 2 words for first name + surname)
     name_parts = name.split()
     if len(name_parts) < 2:
         return jsonify({"error":"Please enter full name including surname (e.g., John Doe)"}), 400
@@ -151,18 +148,15 @@ def add_student():
     try:
         c = conn.cursor()
         
-        # Check for duplicate name
         c.execute("SELECT id FROM students WHERE name = ?", (name,))
         if c.fetchone():
             return jsonify({"error": f"Student '{name}' already exists"}), 409
         
-        # Check for duplicate roll number
         c.execute("SELECT id, name FROM students WHERE roll = ?", (roll,))
         existing = c.fetchone()
         if existing:
             return jsonify({"error": f"Roll number '{roll}' is already assigned to {existing[1]}"}), 409
         
-        # Check for duplicate registration number
         c.execute("SELECT id, name FROM students WHERE reg_no = ?", (reg_no,))
         existing = c.fetchone()
         if existing:
@@ -203,7 +197,6 @@ def upload_face():
     if not files:
         return jsonify({"error":"no images"}), 400
     
-    # Store file data before processing
     file_data = []
     all_embeddings = []
     for file in files:
@@ -215,12 +208,10 @@ def upload_face():
             file_bytes = file.read()
             app.logger.info("File size: %d bytes", len(file_bytes))
             
-            # Compress large images from phone cameras
             img = Image.open(io.BytesIO(file_bytes))
             if img.mode != "RGB":
                 img = img.convert("RGB")
             
-            # Resize if too large (phone cameras often produce 4000x3000+ images)
             max_dimension = 1920
             if img.width > max_dimension or img.height > max_dimension:
                 ratio = min(max_dimension / img.width, max_dimension / img.height)
@@ -228,7 +219,6 @@ def upload_face():
                 img = img.resize(new_size, Image.Resampling.LANCZOS)
                 app.logger.info("Resized image to: %dx%d", img.width, img.height)
             
-            # Save compressed version
             compressed_buffer = io.BytesIO()
             img.save(compressed_buffer, format='JPEG', quality=85, optimize=True)
             file_bytes = compressed_buffer.getvalue()
@@ -237,7 +227,6 @@ def upload_face():
             img_array = np.array(img)
             img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
             
-            # Detect multiple faces - reject if more than one
             import face_recognition
             face_locations = face_recognition.face_locations(img_bgr)
             
@@ -252,28 +241,23 @@ def upload_face():
                     "error": f"Multiple faces detected in {file.filename}. Please upload photos with only ONE person."
                 }), 400
             
-            # Check for AI-generated or animated images
-            # AI-generated images often have very smooth/uniform textures
             gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
             laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
             
-            # Very low variance = overly smooth (AI/CGI), very high = noise/animation
             if laplacian_var < 20:
                 return jsonify({
                     "error": f"{file.filename} appears to be AI-generated or animated. Please use real photos only."
                 }), 400
             
-            # Check color distribution - cartoons/animations have limited color palette
             hist = cv2.calcHist([img_bgr], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
             hist = cv2.normalize(hist, hist).flatten()
             unique_colors = np.count_nonzero(hist > 0.001)
             
-            if unique_colors < 50:  # Too few colors = animation/cartoon
+            if unique_colors < 50:
                 return jsonify({
                     "error": f"{file.filename} appears to be animated or cartoon. Please use real photos only."
                 }), 400
             
-            # Use face_recognition library to extract face encoding
             encoding = extract_face_encoding(img_bgr)
             
             if encoding is not None:
@@ -299,18 +283,15 @@ def upload_face():
         embeddings_arr = np.array(all_embeddings)
     
     if len(embeddings_arr) > 1:
-        # Calculate face distances between uploaded images
         import face_recognition
         distances = []
         for i in range(1, len(embeddings_arr)):
             dist = face_recognition.face_distance([embeddings_arr[0]], embeddings_arr[i])[0]
             distances.append(dist)
         avg_dist = np.mean(distances)
-        # face_recognition distances: 0 = identical, >0.6 = different people
         if avg_dist > 0.6:
             return jsonify({"error": "Images appear to be different people. Upload images of the same person"}), 400
     
-    # Check for duplicate faces across ALL students in dataset
     app.logger.info("Checking for duplicate faces across all students...")
     import face_recognition
     if os.path.exists(DATASET_DIR) and os.listdir(DATASET_DIR):
@@ -318,7 +299,7 @@ def upload_face():
             existing_folder = os.path.join(DATASET_DIR, existing_sid)
             if not os.path.isdir(existing_folder):
                 continue
-            if existing_sid == student_id:  # Skip if same student (for re-uploads)
+            if existing_sid == student_id:
                 continue
             
             for fname in os.listdir(existing_folder):
@@ -328,15 +309,12 @@ def upload_face():
                     if img is None:
                         continue
                     
-                    # Extract face encoding using face_recognition
                     existing_encoding = extract_face_encoding(img)
                     if existing_encoding is None:
                         continue
                     
-                    # Compare with all new embeddings
                     for new_emb in embeddings_arr:
                         dist = face_recognition.face_distance([existing_encoding], new_emb)[0]
-                        # Threshold 0.5 for duplicate detection (stricter than recognition)
                         if dist < 0.5:
                             return jsonify({"error": f"This image matches with an existing student ID {existing_sid}. Please upload different pictures"}), 400
                 except Exception as e:
@@ -345,7 +323,6 @@ def upload_face():
     
     is_temp = student_id.startswith("temp_")
     
-    # Create temporary folder first for validation
     temp_folder = os.path.join(DATASET_DIR, student_id)
     os.makedirs(temp_folder, exist_ok=True)
     
@@ -362,7 +339,6 @@ def upload_face():
                 if img is None:
                     continue
                 
-                # Extract face encoding
                 existing_encoding = extract_face_encoding(img)
                 if existing_encoding is not None:
                     existing_embeddings.append(existing_encoding)
@@ -372,10 +348,8 @@ def upload_face():
     
     if existing_embeddings:
         for new_emb in embeddings_arr:
-            # Compare with all existing embeddings
             distances = face_recognition.face_distance(existing_embeddings, new_emb)
             min_dist = np.min(distances)
-            # Threshold 0.5 for duplicate detection
             if min_dist < 0.5:
                 return jsonify({"error": "This image already exists in this student's records. Please upload different pictures"}), 400
     
@@ -398,13 +372,11 @@ def upload_face():
     app.logger.info("Total files saved: %d", saved)
     
     if saved == 0:
-        # Clean up temp folder if no files saved
         if os.path.exists(folder):
             import shutil
             shutil.rmtree(folder, ignore_errors=True)
         return jsonify({"error": "No images were saved"}), 400
     
-    # NOW save to database after successful file upload and validation
     if is_temp and temp_data:
         conn = get_db()
         try:
@@ -415,7 +387,6 @@ def upload_face():
             actual_student_id = c.lastrowid
             conn.commit()
             
-            # Rename folder from temp_xxxx to actual student ID
             new_folder = os.path.join(DATASET_DIR, str(actual_student_id))
             if os.path.exists(folder) and folder != new_folder:
                 import shutil
@@ -423,14 +394,12 @@ def upload_face():
             
             app.logger.info("Student saved to DB with ID: %d", actual_student_id)
         except sqlite3.IntegrityError:
-            # Clean up folder if DB insert fails
             if os.path.exists(folder):
                 import shutil
                 shutil.rmtree(folder, ignore_errors=True)
             return jsonify({"error": f"Student '{temp_data.get('name')}' already exists"}), 409
         except Exception as e:
             app.logger.error("Database save error: %s", e)
-            # Clean up folder if DB insert fails
             if os.path.exists(folder):
                 import shutil
                 shutil.rmtree(folder, ignore_errors=True)
@@ -438,7 +407,6 @@ def upload_face():
         finally:
             conn.close()
     else:
-        # Existing student - just update has_faces
         actual_student_id = int(student_id)
         conn = get_db()
         try:
@@ -468,7 +436,6 @@ def train_model_route():
         app.logger.error(f"train_model error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# -------- Train progress (polling) --------
 @app.route("/train_status", methods=["GET"])
 def train_status():
     return jsonify(read_train_status())
@@ -486,11 +453,9 @@ def recognize_face():
         if not img_file or img_file.filename == '':
             return jsonify({"recognized": False, "error":"invalid image file"}), 400
         
-        # Check if additional frames are provided for liveness detection
         additional_frames = []
         frame_count = 0
         
-        # Look for frame0, frame1, frame2, etc.
         while f"frame{frame_count}" in request.files:
             frame_file = request.files[f"frame{frame_count}"]
             if frame_file and frame_file.filename != '':
@@ -501,7 +466,6 @@ def recognize_face():
                     additional_frames.append(frame_img)
             frame_count += 1
         
-        # Require liveness detection for attendance marking
         require_liveness = len(additional_frames) >= 2
         
         if require_liveness:
@@ -523,7 +487,6 @@ def recognize_face():
                     "liveness": liveness_result
                 }), 200
         else:
-            # Fallback to single frame (less secure)
             app.logger.warning("Single frame mode - liveness detection disabled")
             emb = extract_embedding_for_image(img_file.stream)
             if emb is None:
@@ -713,5 +676,4 @@ def delete_student(sid):
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    # Run on HTTP - modern browsers allow camera access on local network IPs
     app.run(host='0.0.0.0', port=5000, debug=True)

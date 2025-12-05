@@ -544,7 +544,6 @@
         let selectedFiles = [];
         let cameraStream = null;
 
-        // Camera Functions
         document.getElementById('openCameraBtn').addEventListener('click', async () => {
             const cameraSection = document.getElementById('cameraSection');
             const video = document.getElementById('cameraVideo');
@@ -577,12 +576,10 @@
             canvas.height = video.videoHeight;
             const ctx = canvas.getContext('2d');
             
-            // Mirror the capture
             ctx.translate(canvas.width, 0);
             ctx.scale(-1, 1);
             ctx.drawImage(video, 0, 0);
             
-            // Convert to blob with compression
             const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
             const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
             
@@ -659,25 +656,20 @@
             }, 4000);
         }
 
-        // Update Progress Bar
         function updateProgress() {
             const progress = (currentStep / 3) * 100;
             document.getElementById('progressBar').style.width = progress + '%';
         }
 
-        // Navigate to Step
         function goToStep(step) {
-            // Hide all steps
             document.querySelectorAll('.step-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.step').forEach(el => {
                 el.classList.remove('active', 'completed');
             });
 
-            // Show current step
             document.getElementById('step' + step).classList.add('active');
             document.getElementById('stepIndicator' + step).classList.add('active');
 
-            // Mark completed steps
             for (let i = 1; i < step; i++) {
                 document.getElementById('stepIndicator' + i).classList.add('completed');
             }
@@ -686,7 +678,6 @@
             updateProgress();
         }
 
-        // Step 1: Validate and go to Step 2
         document.getElementById('nextStep1').addEventListener('click', async () => {
             const name = document.getElementById('nameInput').value.trim();
             const roll = document.getElementById('rollInput').value.trim();
@@ -694,7 +685,6 @@
             const sec = document.getElementById('secInput').value.trim();
             const reg_no = document.getElementById('regInput').value.trim();
 
-            // Client-side validation
             if (!name) {
                 showNotification("Full Name is required", "error");
                 document.getElementById('nameInput').focus();
@@ -725,15 +715,13 @@
                 return;
             }
             
-            // Validate full name (must have first name + surname)
             const nameParts = name.split(' ').filter(part => part.length > 0);
             if (nameParts.length < 2) {
-                showNotification("Please enter full name including surname (e.g., John Doe)", "error");
+                showNotification("Please enter full name including surname (e.g., Adrika Dhar)", "error");
                 document.getElementById('nameInput').focus();
                 return;
             }
 
-            // Validate student info with backend
             const formData = new FormData();
             formData.append('name', name);
             formData.append('roll', roll);
@@ -768,17 +756,14 @@
             }
         });
 
-        // Step 2: Back to Step 1
         document.getElementById('prevStep2').addEventListener('click', () => {
             goToStep(1);
         });
 
-        // Upload Area Click
         document.getElementById('uploadArea').addEventListener('click', () => {
             document.getElementById('uploadInput').click();
         });
 
-        // Drag and Drop
         const uploadArea = document.getElementById('uploadArea');
 
         uploadArea.addEventListener('dragover', (e) => {
@@ -797,13 +782,11 @@
             handleFiles(files);
         });
 
-        // File Input Change
         document.getElementById('uploadInput').addEventListener('change', async (e) => {
             const files = Array.from(e.target.files);
             await handleFiles(files);
         });
 
-        // Handle Files
         async function handleFiles(files) {
             const imageFiles = files.filter(file => file.type.startsWith('image/'));
             
@@ -814,7 +797,6 @@
 
             showNotification('Compressing and validating images...', 'info');
             
-            // Compress all images
             for (let i = 0; i < imageFiles.length; i++) {
                 try {
                     const compressedFile = await compressImage(imageFiles[i]);
@@ -830,7 +812,6 @@
             showNotification(`${selectedFiles.length} image(s) ready`, 'success');
         }
 
-        // Update Preview
         function updatePreview() {
             const container = document.getElementById('previewContainer');
             const fileCount = document.getElementById('fileCount');
@@ -861,14 +842,12 @@
             }
         }
 
-        // Remove File
         function removeFile(index) {
             selectedFiles.splice(index, 1);
             updatePreview();
             document.getElementById('nextStep2').disabled = selectedFiles.length === 0;
         }
 
-        // Step 2: Upload and Register
         document.getElementById('nextStep2').addEventListener('click', async () => {
             if (selectedFiles.length === 0) {
                 showNotification('Please select at least one image', 'warning');
@@ -920,7 +899,6 @@
             }
         });
 
-        // Initialize
         updateProgress();
     </script>
 </body>

@@ -1,38 +1,23 @@
-# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
 *.pyc
-
-# Virtual Environment
 venv/
 env/
 ENV/
-
-# Environment Variables
 .env
 .env.local
-
-# Database
 attendance.db
 *.db
 *.sqlite
-
-# Model and Training
 model.pkl
 train_status.json
-
-# Dataset
 dataset/
-
-# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS
 .DS_Store
 Thumbs.db
