@@ -148,19 +148,6 @@
                 margin-top: 0.5rem;
             }
 
-            /* Upload Section - Simplified for Mobile */
-            .upload-section {
-                margin-top: 1.5rem;
-                padding-top: 1.5rem;
-                border-top: 2px solid #e9ecef;
-            }
-
-            .upload-section h6 {
-                font-size: 1rem;
-                font-weight: 600;
-                margin-bottom: 0.75rem;
-            }
-
             .form-control {
                 border-radius: 10px;
                 padding: 0.75rem;
@@ -348,21 +335,6 @@
                     </div>
                 </div>
 
-                <!-- UPLOAD SECTION -->
-                <div class="upload-section">
-                    <h6>📤 Upload Image (Fallback)</h6>
-                    <input
-                        type="file"
-                        id="uploadInput"
-                        accept="image/*"
-                        capture="environment"
-                        class="form-control mb-2"
-                    />
-                    <button id="uploadBtn" class="btn btn-success w-100">
-                        Recognize from Image
-                    </button>
-                </div>
-
                 <div class="recognized-section">
                     <h6>✅ Recognized Today</h6>
                     <ul id="recognizedList" class="list-group"></ul>
@@ -393,7 +365,7 @@
 
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 document.getElementById("markStatus").innerHTML = 
-                    '<div class="alert alert-danger py-2 px-3">⚠️ Camera not supported. Use Upload mode.</div>';
+                    '<div class="alert alert-danger py-2 px-3">⚠️ Camera not supported on this device.</div>';
                 startBtn.disabled = true;
             }
 
@@ -548,53 +520,6 @@
                     '<div class="alert alert-secondary py-2 px-3">Stopped. Tap Start to resume.</div>';
             };
 
-            document.getElementById("uploadBtn").onclick = async () => {
-                const file = document.getElementById("uploadInput").files[0];
-                if (!file) return showNotification("Select an image first", "error");
-
-                const uploadBtn = document.getElementById("uploadBtn");
-                uploadBtn.disabled = true;
-                uploadBtn.innerHTML = '<span class="spinner"></span> Processing...';
-
-                const form = new FormData();
-                form.append("image", file);
-
-                try {
-                    const r = await fetch("/recognize_face", { method: "POST", body: form });
-                    const data = await r.json();
-
-                    if (data.recognized) {
-                        const livenessIcon = data.liveness?.is_live ? '✅' : '⚠️';
-                        if (data.status === "check_in") {
-                            if (!recognizedIds.has(data.student_id)) {
-                                recognizedIds.add(data.student_id);
-                                const li = document.createElement("li");
-                                li.className = "list-group-item list-group-item-success";
-                                li.innerHTML = `<strong>${data.name}</strong> ${livenessIcon}`;
-                                document.getElementById("recognizedList").prepend(li);
-                                showNotification(`✓ ${data.name} marked!`, "success");
-                            } else {
-                                showNotification("Already marked in session", "info");
-                            }
-                        } else if (data.status === "check_out") {
-                            showNotification(`✓ ${data.name} checked out`, "success");
-                        } else if (data.status === "already_marked") {
-                            showNotification("Already marked today", "info");
-                        }
-                    } else {
-                        if (data.liveness && !data.liveness.is_live) {
-                            showNotification(`🚫 ${data.liveness.reason}`, "error");
-                        } else {
-                            showNotification(data.error || "Not recognized", "error");
-                        }
-                    }
-                } catch (err) {
-                    showNotification("Network error", "error");
-                } finally {
-                    uploadBtn.disabled = false;
-                    uploadBtn.innerHTML = 'Recognize from Image';
-                }
-            };
         </script>
     </body>
 </html>
