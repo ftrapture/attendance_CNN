@@ -12,10 +12,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def detect_liveness(image_frames, face_locations_list):
-    if len(image_frames) < 3:
+    if len(image_frames) < 2:
         return False, 0.0, "Insufficient frames for liveness detection"
     
-    if len(face_locations_list) < 3:
+    if len(face_locations_list) < 1:
         return False, 0.0, "Face not detected consistently"
     
     try:
@@ -34,7 +34,7 @@ def detect_liveness(image_frames, face_locations_list):
         position_variance = np.var(positions, axis=0).sum()
         size_variance = np.var(sizes)
         
-        if position_variance > 8000:
+        if position_variance > 20000:
             return False, 0.0, "Excessive movement detected (possible video replay)"
         
         texture_scores = []
@@ -47,7 +47,7 @@ def detect_liveness(image_frames, face_locations_list):
         
         if len(texture_scores) > 0:
             avg_texture = np.mean(texture_scores)
-            if avg_texture < 10:
+            if avg_texture < 3:
                 return False, 0.0, "Low texture complexity (possible printed photo)"
         
         brightness_values = []
@@ -61,12 +61,12 @@ def detect_liveness(image_frames, face_locations_list):
             brightness_variance = np.var(brightness_values)
             pass
         
-        if len(sizes) >= 3:
+        if len(sizes) >= 2:
             size_std = np.std(sizes)
             size_mean = np.mean(sizes)
             size_cv = size_std / size_mean if size_mean > 0 else 0
             
-            if size_cv > 0.35:
+            if size_cv > 0.6:
                 return False, 0.0, "Inconsistent face size (possible screen display)"
         
         confidence = min(1.0, position_variance / 1000.0)
@@ -136,8 +136,8 @@ def extract_face_encoding(image_path_or_array):
             result = DeepFace.represent(
                 img_path=img,
                 model_name='ArcFace',
-                enforce_detection=True,
-                detector_backend='opencv',
+                enforce_detection=False,
+                detector_backend='retinaface',
                 align=True
             )
             
@@ -149,7 +149,7 @@ def extract_face_encoding(image_path_or_array):
                 return None
                 
         except Exception as e:
-            logger.warning(f"DeepFace detection failed: {e}")
+            logger.warning(f"RetinaFace detection failed: {e}, trying opencv")
             try:
                 result = DeepFace.represent(
                     img_path=img,
@@ -197,8 +197,8 @@ def extract_embedding_for_image(stream_or_bytes, require_liveness=False, additio
             result = DeepFace.represent(
                 img_path=bgr_img,
                 model_name='ArcFace',
-                enforce_detection=True,
-                detector_backend='opencv',
+                enforce_detection=False,
+                detector_backend='retinaface',
                 align=True
             )
             
@@ -210,7 +210,7 @@ def extract_embedding_for_image(stream_or_bytes, require_liveness=False, additio
                 return None
                 
         except Exception as e:
-            logger.warning(f"Face detection failed: {e}")
+            logger.warning(f"RetinaFace detection failed: {e}, trying opencv")
             try:
                 result = DeepFace.represent(
                     img_path=bgr_img,
@@ -280,7 +280,7 @@ def load_model_if_exists():
         _model_cache = None
         return None
 
-def predict_with_model(model_data, face_encoding, tolerance=0.4):
+def predict_with_model(model_data, face_encoding, tolerance=0.65):
     try:
         if not model_data or 'encodings' not in model_data or 'labels' not in model_data:
             logger.error("Invalid model data")
@@ -305,6 +305,7 @@ def predict_with_model(model_data, face_encoding, tolerance=0.4):
         
         best_match_idx = -1
         best_similarity = -1
+        second_best_similarity = -1
         
         for idx, known_encoding in enumerate(known_encodings):
             try:
@@ -324,13 +325,21 @@ def predict_with_model(model_data, face_encoding, tolerance=0.4):
                 similarity = 1 - cosine_dist
                 
                 if similarity > best_similarity:
+                    second_best_similarity = best_similarity
                     best_similarity = similarity
                     best_match_idx = idx
+                elif similarity > second_best_similarity:
+                    second_best_similarity = similarity
             except Exception as comp_error:
                 logger.warning(f"Error comparing with encoding {idx}: {comp_error}")
                 continue
         
         if best_similarity >= tolerance:
+            margin = best_similarity - second_best_similarity
+            if second_best_similarity > 0 and margin < 0.08:
+                logger.warning(f"Insufficient margin between top 2 matches: {margin:.3f}. Best: {best_similarity:.3f}, Second: {second_best_similarity:.3f}")
+                return None, float(best_similarity)
+            
             label = known_labels[best_match_idx]
             return label, float(best_similarity)
         else:

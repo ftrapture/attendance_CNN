@@ -300,7 +300,7 @@ def upload_face():
         
         if distances:
             avg_dist = np.mean(distances)
-            if avg_dist > 0.35:
+            if avg_dist > 0.30:
                 return jsonify({"error": "Images appear to be different people. Upload images of the same person"}), 400
     
     app.logger.info("Checking for duplicate faces across all students...")
@@ -330,7 +330,7 @@ def upload_face():
                                 cosine_dist = distance.cosine(existing_encoding, new_emb)
                                 if not np.isnan(cosine_dist) and not np.isinf(cosine_dist):
                                     similarity = 1 - cosine_dist
-                                    if similarity >= 0.55:
+                                    if similarity >= 0.65:
                                         return jsonify({"error": f"This image matches with an existing student ID {existing_sid}. Please upload different pictures"}), 400
                         except Exception as dist_error:
                             app.logger.warning(f"Distance calculation error: {dist_error}")
@@ -376,7 +376,7 @@ def upload_face():
                 
                 if similarities:
                     max_similarity = np.max(similarities)
-                    if max_similarity >= 0.55:
+                    if max_similarity >= 0.70:
                         return jsonify({"error": "This image already exists in this student's records. Please upload different pictures"}), 400
             except Exception as e:
                 app.logger.error(f"Error comparing embeddings: {e}")
@@ -508,7 +508,7 @@ def recognize_face():
                     additional_frames.append(frame_img)
             frame_count += 1
         
-        require_liveness = len(additional_frames) >= 2
+        require_liveness = len(additional_frames) >= 1
         
         if require_liveness:
             result = extract_embedding_for_image(img_file.stream, require_liveness=True, additional_frames=additional_frames)
@@ -571,9 +571,12 @@ def recognize_face():
             app.logger.warning(f"No match found. Best confidence: {conf}")
             return jsonify({"recognized": False, "confidence": float(conf), "error": "No matching student found"}), 200
         
-        if conf < 0.35:
+        if conf < 0.55:
             app.logger.warning(f"Confidence too low: {conf} for student {pred_label}")
-            return jsonify({"recognized": False, "confidence": float(conf), "student_id": int(pred_label), "error": "Confidence too low - please try again"}), 200
+            return jsonify({"recognized": False, "confidence": float(conf), "student_id": int(pred_label), "error": "Confidence too low - please ensure proper lighting and face the camera directly"}), 200
+        
+        if conf < 0.65:
+            app.logger.info(f"Borderline confidence: {conf} for student {pred_label} - flagging for review")
         
         student_id = int(pred_label)
         
